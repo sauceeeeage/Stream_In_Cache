@@ -9,7 +9,8 @@ REMEMBER TO DELETE THE LOG EVERYTIME WHEN STARTING A NEW RUN
 
 #gcc -O2 -fno-tree-vectorize stream.c -o stream_c.exe -DSTREAM_ARRAY_SIZE=20000000 -DSTRIDE=1000 -DSTREAM_TYPE=double 
 #STREAM_ARRAY_SIZE=20000000 STRIDE=1000 cargo build --release 
-c_make_command = "gcc -O2 stream.c -o stream_c.exe"
+c_make_command = "gcc -O2 -fopenmp stream.c -o stream_c.exe"
+c_opm_make_command = "gcc -O2 -fopenmp stream.c -o stream_c.exe"
 c_make_f32_command = "gcc -O2 stream.c -o stream_c_f32.exe"
 c_make_f64_command = "gcc -O2 stream.c -o stream_c_f64.exe"
 rust_make_command = " cargo build --release"
@@ -23,6 +24,7 @@ run_c_f32 = "./stream_c_f32.exe"
 run_c_f64 = "./stream_c_f64.exe"
 file_name = 'cache_bandwidth_log'
 gcc_novec = '-fno-tree-vectorize'
+space = " "
 
 hline = f"-------------------------------------------------------------"
 
@@ -69,48 +71,19 @@ def get_result(size, result, type):
    print(df)
    df.to_csv(f'cache_bandwidth_log.csv', mode='a', header=False)
 
-   # Print the extracted data
-   # with open(file_name, 'a') as file:
-   #    print(hline)
-   #    file.write(f"{hline}\n")
-   #    print(f"Array Size: {size} elements in {type}")
-   #    file.write(f"Array Size: {size} elements in {type}\n")
-   #    for function, values in data.items():
-   #       print(f"{function}: Best Rate MB/s {values[0]}, Avg time {values[1]}, Min time {values[2]}, Max time {values[3]}, Access Times{values[4]}, Avg Time per Access{values[5]}")
-   #       file.write(f"{function}: Best Rate MB/s {values[0]}, Avg time {values[1]}, Min time {values[2]}, Max time {values[3]}, Access Times{values[4]}, Avg Time per Access{values[5]}\n")
-   #    print(f"{hline}\n")
-   #    file.write(f"{hline}\n\n")
-   #    file.flush()
-   #    file.close()
-
 if __name__ == "__main__":
+
+   run_make_command(c_make_command)
 
    while counter <= stop:
       actual_size = to_next_power_of_two(counter)
-      c_size = dash_D_add_on + array_size_add_on + str(actual_size)
-      # c_stride = dash_D_add_on + stride_add_on + str(stride)
-      # c_command = c_make_command + c_size + c_stride
-      
-      # rust_size = array_size_add_on + str(counter) + " "
-      # rust_stride = stride_add_on + str(stride)
-      # rust_command = rust_size + rust_stride + rust_make_command
-
-      # f32 = dash_D_add_on + stream_type_add_on + "float"
-      f64 = dash_D_add_on + stream_type_add_on + "double"
-
-      # f32_command = c_make_f32_command + c_size + f32
-      f64_command = c_make_f64_command + c_size + f64
-
-      # run_make_command(f32_command)
-      # print(f"f32 command: {f32_command}")
-      # f32_result = run_make_command(run_c_f32)
-
-      run_make_command(f64_command)
-      # print(f"f64 command: {f64_command}")
-      f64_result = run_make_command(run_c_f64)
-      # get_result(f32_result, "float")
-      get_result(actual_size, f64_result, "double")
+      run_with_size = run_c + space + str(actual_size)
+      c_result = run_make_command(run_with_size)
+      get_result(actual_size, c_result, "double")
       if actual_size > counter:
          counter = actual_size
       else:
          counter += diff
+   
+   # rm stream_c.exe
+   run_make_command("rm stream_c.exe")

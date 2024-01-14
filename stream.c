@@ -46,6 +46,7 @@
 #include <float.h>
 #include <limits.h>
 #include <sys/time.h>
+#include <stdlib.h>
 
 /*-----------------------------------------------------------------------
  * INSTRUCTIONS:
@@ -90,9 +91,9 @@
  *          will override the default size of 10M with a new size of 100M elements
  *          per array.
  */
-#ifndef STREAM_ARRAY_SIZE
-#define STREAM_ARRAY_SIZE 16777216
-#endif
+// #ifndef STREAM_ARRAY_SIZE
+// #define STREAM_ARRAY_SIZE 16777216
+// #endif
 // 2^24
 
 #ifndef HALF_CACHE_SIZE
@@ -186,9 +187,9 @@
 #define STREAM_TYPE double
 #endif
 
-static STREAM_TYPE a[STREAM_ARRAY_SIZE + OFFSET],
-    b[STREAM_ARRAY_SIZE + OFFSET],
-    c[STREAM_ARRAY_SIZE + OFFSET];
+// static STREAM_TYPE a[STREAM_ARRAY_SIZE + OFFSET],
+//     b[STREAM_ARRAY_SIZE + OFFSET],
+//     c[STREAM_ARRAY_SIZE + OFFSET];
 
 static double t1[HALF_CACHE_SIZE], t2[HALF_CACHE_SIZE];
 
@@ -197,13 +198,6 @@ static double avgtime[5] = {0}, maxtime[5] = {0},
 
 static char *label[5] = {"CYCLIC:                   ", "SAWTOOTH:                 ", "RAND FORWARD FORWARD:     ",
                          "RAND FORWARD BACKWARD:    ", "RAND BACKWARD BACKWARD:   "};
-
-static double bytes[5] = {
-    3 * sizeof(STREAM_TYPE) * STREAM_ARRAY_SIZE,
-    3 * sizeof(STREAM_TYPE) * STREAM_ARRAY_SIZE,
-    3 * sizeof(STREAM_TYPE) * STREAM_ARRAY_SIZE,
-    3 * sizeof(STREAM_TYPE) * STREAM_ARRAY_SIZE,
-    3 * sizeof(STREAM_TYPE) * STREAM_ARRAY_SIZE};
 
 extern double mysecond();
 
@@ -249,7 +243,7 @@ void clear_cache()
     }
 }
 
-int main()
+int main(int argc, char *argv[])
 {
     int quantum, checktick();
     int BytesPerWord;
@@ -257,6 +251,21 @@ int main()
     ssize_t j;
     STREAM_TYPE scalar;
     double t, times[5][NTIMES];
+    size_t array_size = atoi(argv[1]);
+
+    double bytes[5] = {
+        3 * sizeof(STREAM_TYPE) * array_size,
+        3 * sizeof(STREAM_TYPE) * array_size,
+        3 * sizeof(STREAM_TYPE) * array_size,
+        3 * sizeof(STREAM_TYPE) * array_size,
+        3 * sizeof(STREAM_TYPE) * array_size};
+
+    STREAM_TYPE *cyclic_a, *cyclic_b, *cyclic_c;
+    STREAM_TYPE *sawtooth_a, *sawtooth_b, *sawtooth_c;
+    STREAM_TYPE *rand_forward_forward_a, *rand_forward_forward_b, *rand_forward_forward_c;
+    STREAM_TYPE *rand_forward_backward_a, *rand_forward_backward_b, *rand_forward_backward_c;
+    STREAM_TYPE *rand_backward_backward_a, *rand_backward_backward_b, *rand_backward_backward_c;
+    STREAM_TYPE *time_test;
 
     /* --- SETUP --- determine precision and check timing --- */
 
@@ -276,13 +285,13 @@ int main()
     printf("*****  WARNING: ******\n");
 #endif
 
-    printf("Array size = %llu (elements), Offset = %d (elements)\n", (unsigned long long)STREAM_ARRAY_SIZE, OFFSET);
+    printf("Array size = %llu (elements), Offset = %d (elements)\n", (unsigned long long)array_size, OFFSET);
     printf("Memory per array = %.1f MiB (= %.1f GiB).\n",
-           BytesPerWord * ((double)STREAM_ARRAY_SIZE / 1024.0 / 1024.0),
-           BytesPerWord * ((double)STREAM_ARRAY_SIZE / 1024.0 / 1024.0 / 1024.0));
+           BytesPerWord * ((double)array_size / 1024.0 / 1024.0),
+           BytesPerWord * ((double)array_size / 1024.0 / 1024.0 / 1024.0));
     printf("Total memory required = %.1f MiB (= %.1f GiB).\n",
-           (3.0 * BytesPerWord) * ((double)STREAM_ARRAY_SIZE / 1024.0 / 1024.),
-           (3.0 * BytesPerWord) * ((double)STREAM_ARRAY_SIZE / 1024.0 / 1024. / 1024.));
+           (3.0 * BytesPerWord) * ((double)array_size / 1024.0 / 1024.),
+           (3.0 * BytesPerWord) * ((double)array_size / 1024.0 / 1024. / 1024.));
     printf("Each kernel will be executed %d times.\n", NTIMES);
     printf(" The *best* time for each kernel (excluding the first iteration)\n");
     printf(" will be used to compute the reported bandwidth.\n");
@@ -308,13 +317,6 @@ int main()
 #endif
 
     /* Get initial value for system clock. */
-#pragma omp parallel for
-    for (j = 0; j < STREAM_ARRAY_SIZE; j++)
-    {
-        a[j] = 1.0;
-        b[j] = 2.0;
-        c[j] = 0.0;
-    }
     for (int t = 0; t < HALF_CACHE_SIZE; t++)
     {
         t1[t] = 1.0;
@@ -335,9 +337,20 @@ int main()
     }
 
     t = mysecond();
+    time_test = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+    if (time_test == NULL)
+    {
+        printf("Failed to allocate memory for time_test array\n");
+        exit(1);
+    }
 #pragma omp parallel for
-    for (j = 0; j < STREAM_ARRAY_SIZE; j++)
-        a[j] = 2.0E0 * a[j];
+    for (int i = 0; i < array_size; i++)
+    {
+        time_test[i] = 1.0;
+    }
+#pragma omp parallel for
+    for (j = 0; j < array_size; j++)
+        time_test[j] = 2.0E0 * time_test[j];
     t = 1.0E6 * (mysecond() - t);
 
     printf("Each test below will take on the order"
@@ -357,7 +370,27 @@ int main()
     /*	--- MAIN LOOP --- repeat test cases NTIMES times --- */
 
     scalar = 3.0;
+
     /*----------------------CYCLIC---------------------------*/
+
+    cyclic_a = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+    cyclic_b = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+    cyclic_c = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+
+    if (cyclic_a == NULL || cyclic_b == NULL || cyclic_c == NULL)
+    {
+        printf("Failed to allocate memory for cyclic arrays\n");
+        exit(1);
+    }
+
+#pragma omp parallel for
+    for (j = 0; j < array_size; j++)
+    {
+        cyclic_a[j] = 1.0;
+        cyclic_b[j] = 2.0;
+        cyclic_c[j] = 0.0;
+    }
+
 #pragma omp parallel for
     for (int k = 0; k < NTIMES; k++)
     {
@@ -366,19 +399,42 @@ int main()
         tuned_STREAM_Copy();
 #else
         // CYCLIC
-        for (j = 0; j < STREAM_ARRAY_SIZE; j += 8)
+        for (j = 0; j < array_size; j += 8)
         {
-            a[j] = b[j] + scalar * c[j];
+            cyclic_a[j] = cyclic_b[j] + scalar * cyclic_c[j];
         }
-        for (j = 0; j < STREAM_ARRAY_SIZE; j += 8)
+        for (j = 0; j < array_size; j += 8)
         {
-            a[j] = b[j] + scalar * c[j];
+            cyclic_a[j] = cyclic_b[j] + scalar * cyclic_c[j];
         }
 #endif
         times[0][k] = (mysecond() - times[0][k]) / 2; // end
     }
     clear_cache();
+    checkSTREAMresults(cyclic_a, cyclic_b, cyclic_c, "CYCLIC", array_size);
+    free(cyclic_a);
+    free(cyclic_b);
+    free(cyclic_c);
     /*----------------------SAWTOOTH---------------------------*/
+
+    sawtooth_a = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+    sawtooth_b = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+    sawtooth_c = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+
+    if (sawtooth_a == NULL || sawtooth_b == NULL || sawtooth_c == NULL)
+    {
+        printf("Failed to allocate memory for cyclic arrays\n");
+        exit(1);
+    }
+
+#pragma omp parallel for
+    for (j = 0; j < array_size; j++)
+    {
+        sawtooth_a[j] = 1.0;
+        sawtooth_b[j] = 2.0;
+        sawtooth_c[j] = 0.0;
+    }
+
 #pragma omp parallel for
     for (int k = 0; k < NTIMES; k++)
     {
@@ -387,19 +443,42 @@ int main()
         tuned_STREAM_Scale(scalar);
 #else
         // SAWTOOTH
-        for (j = 0; j < STREAM_ARRAY_SIZE; j += 8)
+        for (j = 0; j < array_size; j += 8)
         {
-            a[j] = b[j] + scalar * c[j];
+            sawtooth_a[j] = sawtooth_b[j] + scalar * sawtooth_c[j];
         }
-        for (j = STREAM_ARRAY_SIZE - 1; j >= 0; j -= 8)
+        for (j = array_size - 1; j >= 0; j -= 8)
         {
-            a[j] = b[j] + scalar * c[j];
+            sawtooth_a[j] = sawtooth_b[j] + scalar * sawtooth_c[j];
         }
 #endif
         times[1][k] = (mysecond() - times[1][k]) / 2; // end
     }
     clear_cache();
+    checkSTREAMresults(sawtooth_a, sawtooth_b, sawtooth_c, "SAWTOOTH", array_size);
+    free(sawtooth_a);
+    free(sawtooth_b);
+    free(sawtooth_c);
     /*----------------------RAND FORWARD FORWARD---------------------------*/
+
+    rand_forward_forward_a = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+    rand_forward_forward_b = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+    rand_forward_forward_c = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+
+    if (rand_forward_forward_a == NULL || rand_forward_forward_b == NULL || rand_forward_forward_c == NULL)
+    {
+        printf("Failed to allocate memory for cyclic arrays\n");
+        exit(1);
+    }
+
+#pragma omp parallel for
+    for (j = 0; j < array_size; j++)
+    {
+        rand_forward_forward_a[j] = 1.0;
+        rand_forward_forward_b[j] = 2.0;
+        rand_forward_forward_c[j] = 0.0;
+    }
+
 #pragma omp parallel for
     for (int k = 0; k < NTIMES; k++)
     {
@@ -409,23 +488,46 @@ int main()
 #else
         // CYCLIC(forward-forward) + pseudo random accesses for the loop access pattern
         // don't think we need an actual random number to start with, but it may be better??
-        for (int p = 0, stride = 0, rand = 0; p < STREAM_ARRAY_SIZE; p += 8)
+        for (int p = 0, stride = 0, rand = 0; p < array_size; p += 8)
         {
-            rand = (rand + stride) & (STREAM_ARRAY_SIZE - 1);
-            a[rand] = b[rand] + scalar * c[rand];
+            rand = (rand + stride) & (array_size - 1);
+            rand_forward_forward_a[rand] = rand_forward_forward_b[rand] + scalar * rand_forward_forward_c[rand];
             stride += 8;
         }
-        for (int p = 0, stride = 0, rand = 0; p < STREAM_ARRAY_SIZE; p += 8)
+        for (int p = 0, stride = 0, rand = 0; p < array_size; p += 8)
         {
-            rand = (rand + stride) & (STREAM_ARRAY_SIZE - 1);
-            a[rand] = b[rand] + scalar * c[rand];
+            rand = (rand + stride) & (array_size - 1);
+            rand_forward_forward_a[rand] = rand_forward_forward_b[rand] + scalar * rand_forward_forward_c[rand];
             stride += 8;
         }
 #endif
         times[2][k] = (mysecond() - times[2][k]) / 2; // end
     }
     clear_cache();
+    checkSTREAMresults(rand_forward_forward_a, rand_forward_forward_b, rand_forward_forward_c, "RAND FORWARD FORWARD", array_size);
+    free(rand_forward_forward_a);
+    free(rand_forward_forward_b);
+    free(rand_forward_forward_c);
     /*----------------------RAND FORWARD BACKWARD---------------------------*/
+
+    rand_forward_backward_a = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+    rand_forward_backward_b = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+    rand_forward_backward_c = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+
+    if (rand_forward_backward_a == NULL || rand_forward_backward_b == NULL || rand_forward_backward_c == NULL)
+    {
+        printf("Failed to allocate memory for cyclic arrays\n");
+        exit(1);
+    }
+
+#pragma omp parallel for
+    for (j = 0; j < array_size; j++)
+    {
+        rand_forward_backward_a[j] = 1.0;
+        rand_forward_backward_b[j] = 2.0;
+        rand_forward_backward_c[j] = 0.0;
+    }
+
 #pragma omp parallel for
     for (int k = 0; k < NTIMES; k++)
     {
@@ -436,16 +538,16 @@ int main()
 #else
         // SAWTOOTH(forward-backward) + pseudo random accesses for the loop access pattern
         // REAL SAWTOOTH
-        for (int p = 0; p < STREAM_ARRAY_SIZE; p += 8)
+        for (int p = 0; p < array_size; p += 8)
         {
-            for_back_rand = (for_back_rand + for_back_stride) & (STREAM_ARRAY_SIZE - 1);
-            a[for_back_rand] = b[for_back_rand] + scalar * c[for_back_rand];
+            for_back_rand = (for_back_rand + for_back_stride) & (array_size - 1);
+            rand_forward_backward_a[for_back_rand] = rand_forward_backward_b[for_back_rand] + scalar * rand_forward_backward_c[for_back_rand];
             for_back_stride += 8;
         }
-        for (int p = 0; p < STREAM_ARRAY_SIZE; p += 8)
+        for (int p = 0; p < array_size; p += 8)
         {
-            for_back_rand = (for_back_rand - for_back_stride) & (STREAM_ARRAY_SIZE - 1);
-            a[for_back_rand] = b[for_back_rand] + scalar * c[for_back_rand];
+            for_back_rand = (for_back_rand - for_back_stride) & (array_size - 1);
+            rand_forward_backward_a[for_back_rand] = rand_forward_backward_b[for_back_rand] + scalar * rand_forward_backward_c[for_back_rand];
             for_back_stride -= 8;
         }
 
@@ -469,7 +571,30 @@ int main()
         times[3][k] = (mysecond() - times[3][k]) / 2; // end
     }
     clear_cache();
+    checkSTREAMresults(rand_forward_backward_a, rand_forward_backward_b, rand_forward_backward_c, "RAND FORWARD BACKWARD", array_size);
+    free(rand_forward_backward_a);
+    free(rand_forward_backward_b);
+    free(rand_forward_backward_c);
     /*----------------------RAND BACKWARD BACKWARD---------------------------*/
+
+    rand_backward_backward_a = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+    rand_backward_backward_b = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+    rand_backward_backward_c = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+
+    if (rand_backward_backward_a == NULL || rand_backward_backward_b == NULL || rand_backward_backward_c == NULL)
+    {
+        printf("Failed to allocate memory for cyclic arrays\n");
+        exit(1);
+    }
+
+#pragma omp parallel for
+    for (j = 0; j < array_size; j++)
+    {
+        rand_backward_backward_a[j] = 1.0;
+        rand_backward_backward_b[j] = 2.0;
+        rand_backward_backward_c[j] = 0.0;
+    }
+
 #pragma omp parallel for
     for (int k = 0; k < NTIMES; k++)
     {
@@ -478,22 +603,26 @@ int main()
         tuned_STREAM_Add();
 #else
         // CYCLIC(backward-backward) + pseudo random accesses for the loop access pattern
-        for (int p = 0, stride = STREAM_ARRAY_SIZE, rand = STREAM_ARRAY_SIZE / 2; p < STREAM_ARRAY_SIZE; p += 8)
+        for (int p = 0, stride = array_size, rand = array_size / 2; p < array_size; p += 8)
         {
-            rand = (rand - stride) & (STREAM_ARRAY_SIZE - 1);
-            a[rand] = b[rand] + scalar * c[rand];
+            rand = (rand - stride) & (array_size - 1);
+            rand_backward_backward_a[rand] = rand_backward_backward_b[rand] + scalar * rand_backward_backward_c[rand];
             stride -= 8;
         }
-        for (int p = 0, stride = STREAM_ARRAY_SIZE, rand = STREAM_ARRAY_SIZE / 2; p < STREAM_ARRAY_SIZE; p += 8)
+        for (int p = 0, stride = array_size, rand = array_size / 2; p < array_size; p += 8)
         {
-            rand = (rand - stride) & (STREAM_ARRAY_SIZE - 1);
-            a[rand] = b[rand] + scalar * c[rand];
+            rand = (rand - stride) & (array_size - 1);
+            rand_backward_backward_a[rand] = rand_backward_backward_b[rand] + scalar * rand_backward_backward_c[rand];
             stride -= 8;
         }
 #endif
         times[4][k] = (mysecond() - times[4][k]) / 2; // end
     }
     clear_cache();
+    checkSTREAMresults(rand_backward_backward_a, rand_backward_backward_b, rand_backward_backward_c, "RAND BACKWARD BACKWARD", array_size);
+    free(rand_backward_backward_a);
+    free(rand_backward_backward_b);
+    free(rand_backward_backward_c);
 
     /*	--- SUMMARY --- */
 
@@ -507,6 +636,8 @@ int main()
         }
     }
 
+    printf(HLINE);
+
     printf("Function                  Best Rate MB/s  Avg time      Min time      Max time      Access Times      Avg Time per Access\n");
     for (j = 0; j < 5; j++)
     {
@@ -518,14 +649,9 @@ int main()
                avgtime[j],
                mintime[j],
                maxtime[j],
-               (double)(3 * STREAM_ARRAY_SIZE),
-               (avgtime[j] / (double)(3 * STREAM_ARRAY_SIZE)));
+               (double)(3 * array_size),
+               (avgtime[j] / (double)(3 * array_size)));
     }
-    printf(HLINE);
-
-    /* --- Check Results --- */
-    checkSTREAMresults();
-    printf(HLINE);
 
     return 0;
 }
@@ -581,7 +707,7 @@ double mysecond()
 #define abs(a) ((a) >= 0 ? (a) : -(a))
 #endif
 
-void checkSTREAMresults()
+void checkSTREAMresults(STREAM_TYPE *a, STREAM_TYPE *b, STREAM_TYPE *c, char *label, size_t array_size)
 {
     STREAM_TYPE aj, bj, cj, t1j, t2j, scalar;
     STREAM_TYPE aSumErr, bSumErr, cSumErr, t1jSumErr, t2jSumErr;
@@ -615,7 +741,7 @@ void checkSTREAMresults()
     cSumErr = 0.0;
     t1jSumErr = 0.0;
     t2jSumErr = 0.0;
-    for (j = 0; j < STREAM_ARRAY_SIZE; j++)
+    for (j = 0; j < array_size; j += 8)
     {
         aSumErr += abs(a[j] - aj);
         bSumErr += abs(b[j] - bj);
@@ -627,9 +753,9 @@ void checkSTREAMresults()
         t1jSumErr += abs(t1[t] - t1j);
         t2jSumErr += abs(t2[t] - t2j);
     }
-    aAvgErr = aSumErr / (STREAM_TYPE)STREAM_ARRAY_SIZE;
-    bAvgErr = bSumErr / (STREAM_TYPE)STREAM_ARRAY_SIZE;
-    cAvgErr = cSumErr / (STREAM_TYPE)STREAM_ARRAY_SIZE;
+    aAvgErr = aSumErr / ((STREAM_TYPE)array_size / 8);
+    bAvgErr = bSumErr / ((STREAM_TYPE)array_size / 8);
+    cAvgErr = cSumErr / ((STREAM_TYPE)array_size / 8);
 
     if (sizeof(STREAM_TYPE) == 4)
     {
@@ -652,7 +778,7 @@ void checkSTREAMresults()
         printf("Failed Validation on array a[], AvgRelAbsErr > epsilon (%e)\n", epsilon);
         printf("     Expected Value: %e, AvgAbsErr: %e, AvgRelAbsErr: %e\n", aj, aAvgErr, abs(aAvgErr) / aj);
         ierr = 0;
-        for (j = 0; j < STREAM_ARRAY_SIZE; j++)
+        for (j = 0; j < array_size; j++)
         {
             if (abs(a[j] / aj - 1.0) > epsilon)
             {
@@ -675,7 +801,7 @@ void checkSTREAMresults()
         printf("     Expected Value: %e, AvgAbsErr: %e, AvgRelAbsErr: %e\n", bj, bAvgErr, abs(bAvgErr) / bj);
         printf("     AvgRelAbsErr > Epsilon (%e)\n", epsilon);
         ierr = 0;
-        for (j = 0; j < STREAM_ARRAY_SIZE; j++)
+        for (j = 0; j < array_size; j++)
         {
             if (abs(b[j] / bj - 1.0) > epsilon)
             {
@@ -698,7 +824,7 @@ void checkSTREAMresults()
         printf("     Expected Value: %e, AvgAbsErr: %e, AvgRelAbsErr: %e\n", cj, cAvgErr, abs(cAvgErr) / cj);
         printf("     AvgRelAbsErr > Epsilon (%e)\n", epsilon);
         ierr = 0;
-        for (j = 0; j < STREAM_ARRAY_SIZE; j++)
+        for (j = 0; j < array_size; j++)
         {
             if (abs(c[j] / cj - 1.0) > epsilon)
             {
@@ -717,8 +843,8 @@ void checkSTREAMresults()
     if (err == 0)
     {
         printf(
-            "Solution Validates: avg error less than %e on all three arrays\n",
-            epsilon);
+            "Solution Validates for %s: avg error less than %e on all three arrays\n",
+            label, epsilon);
     }
 
 #ifdef VERBOSE
