@@ -5,3 +5,6 @@ stream_unmod.c
 /.idea
 stream_c_test
 /.vscode
+test.c
+test.o
+stream

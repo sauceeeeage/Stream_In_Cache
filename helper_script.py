@@ -9,7 +9,7 @@ REMEMBER TO DELETE THE LOG EVERYTIME WHEN STARTING A NEW RUN
 
 #gcc -O2 -fno-tree-vectorize stream.c -o stream_c.exe -DSTREAM_ARRAY_SIZE=20000000 -DSTRIDE=1000 -DSTREAM_TYPE=double 
 #STREAM_ARRAY_SIZE=20000000 STRIDE=1000 cargo build --release 
-c_make_command = "gcc -O2 -fopenmp stream.c -o stream_c.exe"
+c_make_command = "gcc -O2 stream.c -o stream_c.exe"
 c_opm_make_command = "gcc -O2 -fopenmp stream.c -o stream_c.exe"
 c_make_f32_command = "gcc -O2 stream.c -o stream_c_f32.exe"
 c_make_f64_command = "gcc -O2 stream.c -o stream_c_f64.exe"
