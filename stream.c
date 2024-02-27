@@ -45,6 +45,8 @@
 #include <cpuid.h>
 #include <limits.h>
 #include <math.h>
+#include <pthread.h>
+#include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/time.h>
@@ -103,7 +105,7 @@
 #ifndef HALF_CACHE_SIZE
 #define HALF_CACHE_SIZE 67108864
 #endif
-// half of a GB
+// 1 GB
 
 #ifndef STRIDE
 #define STRIDE 1000
@@ -243,9 +245,11 @@ long triangular_number_mod_2n(long k, long power_of_two) {
   return triangular_number % power_of_two;
 }
 
-void clear_cache() {
+static inline void clear_cache() {
+  double tmp;
   for (int t = 0; t < HALF_CACHE_SIZE; t++) {
-    t1[t] = t2[t] * 3.0;
+    tmp = t1[t];
+    tmp = t2[t];
   }
 }
 
@@ -253,7 +257,7 @@ void clear_cache() {
  * not available, use rdtsc
  */
 
-unsigned long long rdtsc() {
+static inline unsigned long long rdtsc() {
   // unsigned int lo, hi;
   // __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
   // return ((unsigned long long)hi << 32) | lo;
@@ -283,6 +287,7 @@ int main(int argc, char *argv[]) {
   STREAM_TYPE scalar;
   double t, times[5][NTIMES];
   size_t array_size = atoi(argv[1]);
+  cpu_set_t mask;
 
   double bytes[5] = {3 * sizeof(STREAM_TYPE) * array_size,
                      3 * sizeof(STREAM_TYPE) * array_size,
@@ -290,17 +295,31 @@ int main(int argc, char *argv[]) {
                      3 * sizeof(STREAM_TYPE) * array_size,
                      3 * sizeof(STREAM_TYPE) * array_size};
 
-  STREAM_TYPE *cyclic_a, *cyclic_b, *cyclic_c;
-  STREAM_TYPE *sawtooth_a, *sawtooth_b, *sawtooth_c;
+  STREAM_TYPE *cyclic_a, *cyclic_b, *cyclic_c, *cyclic;
+  STREAM_TYPE *sawtooth_a, *sawtooth_b, *sawtooth_c, *sawtooth;
   STREAM_TYPE *rand_forward_forward_a, *rand_forward_forward_b,
-      *rand_forward_forward_c;
+      *rand_forward_forward_c, *rand_forward_forward;
   STREAM_TYPE *rand_forward_backward_a, *rand_forward_backward_b,
-      *rand_forward_backward_c;
+      *rand_forward_backward_c, *rand_forward_backward;
   STREAM_TYPE *rand_backward_backward_a, *rand_backward_backward_b,
-      *rand_backward_backward_c;
+      *rand_backward_backward_c, *rand_backward_backward;
   STREAM_TYPE *time_test;
 
   // __cpuid(cpuInfo, 0);
+
+  /* SET THREAD AFFINITY */
+#define _GNU_SOURCE 1
+#define __USE_GNU 1
+
+  CPU_ZERO(&mask);
+  CPU_SET(0, &mask);
+  if (sched_setaffinity(0, sizeof(mask), &mask) == -1) {
+    printf("Failed to set CPU affinity\n");
+    exit(1);
+  } else {
+    int cpu = sched_getcpu();
+    printf("CPU affinity set to CPU %d\n", cpu);
+  }
 
   /* --- SETUP --- determine precision and check timing --- */
 
@@ -363,8 +382,8 @@ int main(int argc, char *argv[]) {
 
   /* Get initial value for system clock. */
   for (int t = 0; t < HALF_CACHE_SIZE; t++) {
-    t1[t] = 1.0;
-    t2[t] = 2.0;
+    t1[t] = 1.0 * t;
+    t2[t] = 2.0 * t;
   }
 
   printf(HLINE);
@@ -379,7 +398,7 @@ int main(int argc, char *argv[]) {
     quantum = 1;
   }
 
-  t = mysecond();
+  t = rdtsc();
   time_test = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
   if (time_test == NULL) {
     printf("Failed to allocate memory for time_test array\n");
@@ -392,10 +411,10 @@ int main(int argc, char *argv[]) {
 #pragma omp parallel for
   for (j = 0; j < array_size; j++)
     time_test[j] = 2.0E0 * time_test[j];
-  t = 1.0E6 * (mysecond() - t);
+  t = (rdtsc() - t);
 
   printf("Each test below will take on the order"
-         " of %d nanoseconds.\n",
+         " of %d cycles.\n",
          (int)t);
   printf("   (= %d clock ticks)\n", (int)(t / quantum));
   printf("Increase the size of the arrays if this shows that\n");
@@ -414,22 +433,36 @@ int main(int argc, char *argv[]) {
 
   /*----------------------CYCLIC---------------------------*/
 
-  cyclic_a = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  cyclic_b = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  cyclic_c = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+  // cyclic_a = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+  // cyclic_b = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+  // cyclic_c = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+  cyclic = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
 
-  if (cyclic_a == NULL || cyclic_b == NULL || cyclic_c == NULL) {
+  // if (cyclic_a == NULL || cyclic_b == NULL || cyclic_c == NULL) {
+  //   printf("Failed to allocate memory for cyclic arrays\n");
+  //   exit(1);
+  // }
+
+  if (cyclic == NULL) {
     printf("Failed to allocate memory for cyclic arrays\n");
     exit(1);
   }
 
 #pragma omp parallel for
   for (j = 0; j < array_size; j++) {
-    cyclic_a[j] = 1.0;
-    cyclic_b[j] = 2.0;
-    cyclic_c[j] = 0.0;
+    // cyclic_a[j] = 1.0;
+    // cyclic_b[j] = 2.0;
+    // cyclic_c[j] = 0.0;
+    cyclic[j] = 1.0 * j;
   }
+  STREAM_TYPE cyclic_tmp;
   clear_cache();
+
+  // load the array into the cache
+
+  for (j = 0; j < array_size; j += 1) {
+    cyclic_tmp = cyclic[j];
+  }
 
 #pragma omp parallel for
   for (int k = 0; k < NTIMES; k++) {
@@ -440,38 +473,48 @@ int main(int argc, char *argv[]) {
 #else
     // CYCLIC
     for (j = 0; j < array_size; j += 8) {
-      cyclic_a[j] = cyclic_b[j] + scalar * cyclic_c[j];
+      cyclic_tmp = cyclic[j];
     }
     for (j = 0; j < array_size; j += 8) {
-      cyclic_a[j] = cyclic_b[j] + scalar * cyclic_c[j];
+      cyclic_tmp = cyclic[j];
     }
 #endif
     // times[0][k] = (mysecond() - times[0][k]) / 2; // end
-    cycles[0][k] = rdtsc() - cycles[0][k];
+    cycles[0][k] = (rdtsc() - cycles[0][k]) / 2;
   }
 
-  checkSTREAMresults(cyclic_a, cyclic_b, cyclic_c, "CYCLIC", array_size);
-  free(cyclic_a);
-  free(cyclic_b);
-  free(cyclic_c);
+  free(cyclic);
+  // checkSTREAMresults(cyclic_a, cyclic_b, cyclic_c, "CYCLIC", array_size);
+  // free(cyclic_a);
+  // free(cyclic_b);
+  // free(cyclic_c);
   /*----------------------SAWTOOTH---------------------------*/
 
-  sawtooth_a = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  sawtooth_b = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  sawtooth_c = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+  // sawtooth_a = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+  // sawtooth_b = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+  // sawtooth_c = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+  sawtooth = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
 
-  if (sawtooth_a == NULL || sawtooth_b == NULL || sawtooth_c == NULL) {
+  // if (sawtooth_a == NULL || sawtooth_b == NULL || sawtooth_c == NULL) {
+  //   printf("Failed to allocate memory for cyclic arrays\n");
+  //   exit(1);
+  // }
+  if (sawtooth == NULL) {
     printf("Failed to allocate memory for cyclic arrays\n");
     exit(1);
   }
-
 #pragma omp parallel for
   for (j = 0; j < array_size; j++) {
-    sawtooth_a[j] = 1.0;
-    sawtooth_b[j] = 2.0;
-    sawtooth_c[j] = 0.0;
+    // sawtooth_a[j] = 1.0;
+    // sawtooth_b[j] = 2.0;
+    // sawtooth_c[j] = 0.0;
+    sawtooth[j] = 1.0 * j;
   }
+  STREAM_TYPE sawtooth_tmp;
   clear_cache();
+  for (j = 0; j < array_size; j += 1) {
+    sawtooth_tmp = sawtooth[j];
+  }
 #pragma omp parallel for
   for (int k = 0; k < NTIMES; k++) {
     // times[1][k] = mysecond(); // start
@@ -481,44 +524,55 @@ int main(int argc, char *argv[]) {
 #else
     // SAWTOOTH
     for (j = 0; j < array_size; j += 8) {
-      sawtooth_a[j] = sawtooth_b[j] + scalar * sawtooth_c[j];
+      sawtooth_tmp = sawtooth[j];
     }
     for (j = array_size - 1; j >= 0; j -= 8) {
-      sawtooth_a[j] = sawtooth_b[j] + scalar * sawtooth_c[j];
+      sawtooth_tmp = sawtooth[j];
     }
 #endif
     // times[1][k] = (mysecond() - times[1][k]) / 2; // end
-    cycles[1][k] = rdtsc() - cycles[1][k];
+    cycles[1][k] = (rdtsc() - cycles[1][k]) / 2;
   }
-
-  checkSTREAMresults(sawtooth_a, sawtooth_b, sawtooth_c, "SAWTOOTH",
-                     array_size);
-  free(sawtooth_a);
-  free(sawtooth_b);
-  free(sawtooth_c);
+  free(sawtooth);
+  // checkSTREAMresults(sawtooth_a, sawtooth_b, sawtooth_c, "SAWTOOTH",
+  //                    array_size);
+  // free(sawtooth_a);
+  // free(sawtooth_b);
+  // free(sawtooth_c);
   /*----------------------RAND FORWARD FORWARD---------------------------*/
 
-  rand_forward_forward_a =
-      (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  rand_forward_forward_b =
-      (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  rand_forward_forward_c =
+  // rand_forward_forward_a =
+  //     (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+  // rand_forward_forward_b =
+  //     (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+  // rand_forward_forward_c =
+  //     (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+
+  // if (rand_forward_forward_a == NULL || rand_forward_forward_b == NULL ||
+  //     rand_forward_forward_c == NULL) {
+  //   printf("Failed to allocate memory for cyclic arrays\n");
+  //   exit(1);
+  // }
+  rand_forward_forward =
       (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
 
-  if (rand_forward_forward_a == NULL || rand_forward_forward_b == NULL ||
-      rand_forward_forward_c == NULL) {
+  if (rand_forward_forward == NULL) {
     printf("Failed to allocate memory for cyclic arrays\n");
     exit(1);
   }
 
 #pragma omp parallel for
   for (j = 0; j < array_size; j++) {
-    rand_forward_forward_a[j] = 1.0;
-    rand_forward_forward_b[j] = 2.0;
-    rand_forward_forward_c[j] = 0.0;
+    // rand_forward_forward_a[j] = 1.0;
+    // rand_forward_forward_b[j] = 2.0;
+    // rand_forward_forward_c[j] = 0.0;
+    rand_forward_forward[j] = 1.0 * j;
   }
+  STREAM_TYPE rand_forward_forward_tmp;
   clear_cache();
-
+  for (j = 0; j < array_size; j += 1) {
+    rand_forward_forward_tmp = rand_forward_forward[j];
+  }
 #pragma omp parallel for
   for (int k = 0; k < NTIMES; k++) {
     // times[2][k] = mysecond(); // start
@@ -531,49 +585,58 @@ int main(int argc, char *argv[]) {
     // may be better??
     for (int p = 0, stride = 0, rand = 0; p < array_size; p += 8) {
       rand = (rand + stride) & (array_size - 1);
-      rand_forward_forward_a[rand] =
-          rand_forward_forward_b[rand] + scalar * rand_forward_forward_c[rand];
+      rand_forward_forward_tmp = rand_forward_forward[rand];
       stride += 8;
     }
     for (int p = 0, stride = 0, rand = 0; p < array_size; p += 8) {
       rand = (rand + stride) & (array_size - 1);
-      rand_forward_forward_a[rand] =
-          rand_forward_forward_b[rand] + scalar * rand_forward_forward_c[rand];
+      rand_forward_forward_tmp = rand_forward_forward[rand];
       stride += 8;
     }
 #endif
     // times[2][k] = (mysecond() - times[2][k]) / 2; // end
-    cycles[2][k] = rdtsc() - cycles[2][k];
+    cycles[2][k] = (rdtsc() - cycles[2][k]) / 2;
   }
-
-  checkSTREAMresults(rand_forward_forward_a, rand_forward_forward_b,
-                     rand_forward_forward_c, "RAND FORWARD FORWARD",
-                     array_size);
-  free(rand_forward_forward_a);
-  free(rand_forward_forward_b);
-  free(rand_forward_forward_c);
+  free(rand_forward_forward);
+  // checkSTREAMresults(rand_forward_forward_a, rand_forward_forward_b,
+  //                    rand_forward_forward_c, "RAND FORWARD FORWARD",
+  //                    array_size);
+  // free(rand_forward_forward_a);
+  // free(rand_forward_forward_b);
+  // free(rand_forward_forward_c);
   /*----------------------RAND FORWARD BACKWARD---------------------------*/
 
-  rand_forward_backward_a =
-      (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  rand_forward_backward_b =
-      (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  rand_forward_backward_c =
-      (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+  // rand_forward_backward_a =
+  //     (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+  // rand_forward_backward_b =
+  //     (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+  // rand_forward_backward_c =
+  //     (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
 
-  if (rand_forward_backward_a == NULL || rand_forward_backward_b == NULL ||
-      rand_forward_backward_c == NULL) {
+  // if (rand_forward_backward_a == NULL || rand_forward_backward_b == NULL ||
+  //     rand_forward_backward_c == NULL) {
+  //   printf("Failed to allocate memory for cyclic arrays\n");
+  //   exit(1);
+  // }
+  rand_forward_backward =
+      (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+  if (rand_forward_backward == NULL) {
     printf("Failed to allocate memory for cyclic arrays\n");
     exit(1);
   }
 
 #pragma omp parallel for
   for (j = 0; j < array_size; j++) {
-    rand_forward_backward_a[j] = 1.0;
-    rand_forward_backward_b[j] = 2.0;
-    rand_forward_backward_c[j] = 0.0;
+    // rand_forward_backward_a[j] = 1.0;
+    // rand_forward_backward_b[j] = 2.0;
+    // rand_forward_backward_c[j] = 0.0;
+    rand_forward_backward[j] = 1.0 * j;
   }
+  STREAM_TYPE rand_forward_backward_tmp;
   clear_cache();
+  for (j = 0; j < array_size; j += 1) {
+    rand_forward_backward_tmp = rand_forward_backward[j];
+  }
 #pragma omp parallel for
   for (int k = 0; k < NTIMES; k++) {
     int for_back_stride = 0, for_back_rand = 0;
@@ -586,16 +649,18 @@ int main(int argc, char *argv[]) {
     // pattern REAL SAWTOOTH
     for (int p = 0; p < array_size; p += 8) {
       for_back_rand = (for_back_rand + for_back_stride) & (array_size - 1);
-      rand_forward_backward_a[for_back_rand] =
-          rand_forward_backward_b[for_back_rand] +
-          scalar * rand_forward_backward_c[for_back_rand];
+      // rand_forward_backward_a[for_back_rand] =
+      //     rand_forward_backward_b[for_back_rand] +
+      //     scalar * rand_forward_backward_c[for_back_rand];
+      rand_forward_backward_tmp = rand_forward_backward[for_back_rand];
       for_back_stride += 8;
     }
     for (int p = 0; p < array_size; p += 8) {
       for_back_rand = (for_back_rand - for_back_stride) & (array_size - 1);
-      rand_forward_backward_a[for_back_rand] =
-          rand_forward_backward_b[for_back_rand] +
-          scalar * rand_forward_backward_c[for_back_rand];
+      // rand_forward_backward_a[for_back_rand] =
+      //     rand_forward_backward_b[for_back_rand] +
+      //     scalar * rand_forward_backward_c[for_back_rand];
+      rand_forward_backward_tmp = rand_forward_backward[for_back_rand];
       for_back_stride -= 8;
     }
 
@@ -617,38 +682,48 @@ int main(int argc, char *argv[]) {
     // END OF THE FAKE SAWTOOTH
 #endif
     // times[3][k] = (mysecond() - times[3][k]) / 2; // end
-    cycles[3][k] = rdtsc() - cycles[3][k];
+    cycles[3][k] = (rdtsc() - cycles[3][k]) / 2;
   }
-
-  checkSTREAMresults(rand_forward_backward_a, rand_forward_backward_b,
-                     rand_forward_backward_c, "RAND FORWARD BACKWARD",
-                     array_size);
-  free(rand_forward_backward_a);
-  free(rand_forward_backward_b);
-  free(rand_forward_backward_c);
+  free(rand_forward_backward);
+  // checkSTREAMresults(rand_forward_backward_a, rand_forward_backward_b,
+  //                    rand_forward_backward_c, "RAND FORWARD BACKWARD",
+  //                    array_size);
+  // free(rand_forward_backward_a);
+  // free(rand_forward_backward_b);
+  // free(rand_forward_backward_c);
   /*----------------------RAND BACKWARD BACKWARD---------------------------*/
 
-  rand_backward_backward_a =
-      (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  rand_backward_backward_b =
-      (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  rand_backward_backward_c =
-      (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+  // rand_backward_backward_a =
+  //     (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+  // rand_backward_backward_b =
+  //     (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+  // rand_backward_backward_c =
+  //     (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
 
-  if (rand_backward_backward_a == NULL || rand_backward_backward_b == NULL ||
-      rand_backward_backward_c == NULL) {
+  // if (rand_backward_backward_a == NULL || rand_backward_backward_b == NULL ||
+  //     rand_backward_backward_c == NULL) {
+  //   printf("Failed to allocate memory for cyclic arrays\n");
+  //   exit(1);
+  // }
+  rand_backward_backward =
+      (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
+  if (rand_backward_backward == NULL) {
     printf("Failed to allocate memory for cyclic arrays\n");
     exit(1);
   }
 
 #pragma omp parallel for
   for (j = 0; j < array_size; j++) {
-    rand_backward_backward_a[j] = 1.0;
-    rand_backward_backward_b[j] = 2.0;
-    rand_backward_backward_c[j] = 0.0;
+    // rand_backward_backward_a[j] = 1.0;
+    // rand_backward_backward_b[j] = 2.0;
+    // rand_backward_backward_c[j] = 0.0;
+    rand_backward_backward[j] = 1.0 * j;
   }
+  STREAM_TYPE rand_backward_backward_tmp;
   clear_cache();
-
+  for (j = 0; j < array_size; j += 1) {
+    rand_backward_backward_tmp = rand_backward_backward[j];
+  }
 #pragma omp parallel for
   for (int k = 0; k < NTIMES; k++) {
     // times[4][k] = mysecond(); // start
@@ -661,28 +736,26 @@ int main(int argc, char *argv[]) {
     for (int p = 0, stride = array_size, rand = array_size / 2; p < array_size;
          p += 8) {
       rand = (rand - stride) & (array_size - 1);
-      rand_backward_backward_a[rand] = rand_backward_backward_b[rand] +
-                                       scalar * rand_backward_backward_c[rand];
+      rand_backward_backward_tmp = rand_backward_backward[rand];
       stride -= 8;
     }
     for (int p = 0, stride = array_size, rand = array_size / 2; p < array_size;
          p += 8) {
       rand = (rand - stride) & (array_size - 1);
-      rand_backward_backward_a[rand] = rand_backward_backward_b[rand] +
-                                       scalar * rand_backward_backward_c[rand];
+      rand_backward_backward_tmp = rand_backward_backward[rand];
       stride -= 8;
     }
 #endif
     // times[4][k] = (mysecond() - times[4][k]) / 2; // end
-    cycles[4][k] = rdtsc() - cycles[4][k];
+    cycles[4][k] = (rdtsc() - cycles[4][k]) / 2;
   }
-
-  checkSTREAMresults(rand_backward_backward_a, rand_backward_backward_b,
-                     rand_backward_backward_c, "RAND BACKWARD BACKWARD",
-                     array_size);
-  free(rand_backward_backward_a);
-  free(rand_backward_backward_b);
-  free(rand_backward_backward_c);
+  free(rand_backward_backward);
+  // checkSTREAMresults(rand_backward_backward_a, rand_backward_backward_b,
+  //                    rand_backward_backward_c, "RAND BACKWARD BACKWARD",
+  //                    array_size);
+  // free(rand_backward_backward_a);
+  // free(rand_backward_backward_b);
+  // free(rand_backward_backward_c);
 
   /*	--- SUMMARY --- */
   // convert cycles to nanoseconds
@@ -703,17 +776,16 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  printf(HLINE);
-
-  printf("Function                  Best Rate MB/s  Avg time      Min time     "
-         " Max time      Access Times      Avg Time per Access\n");
+  printf("Function                  Best Rate MiB/cycles  Avg cycles      Min "
+         "cycles     "
+         " Max cycles      Access Times      Avg Cycles per Access\n");
   for (j = 0; j < 5; j++) {
     avgtime[j] = avgtime[j] / (double)(NTIMES - 1);
 
     printf("%s%e  %e  %e  %e    %e        %e\n", label[j],
-           1.0E-06 * bytes[j] / mintime[j], avgtime[j], mintime[j], maxtime[j],
-           (double)(3 * array_size / 8),
-           (avgtime[j] / (double)(3 * (array_size / 8))));
+           1024 * 1024 * bytes[j] / mintime[j], avgtime[j], mintime[j],
+           maxtime[j], (double)(array_size / 8),
+           (avgtime[j] / (double)(array_size / 8)));
   }
 
   return 0;
@@ -754,7 +826,7 @@ int checktick() {
 
 #include <time.h>
 
-double mysecond() {
+inline double mysecond() {
   struct timespec ts;
   int i;
 
