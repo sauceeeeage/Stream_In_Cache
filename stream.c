@@ -278,6 +278,24 @@ int rdtscp_supported(void) {
   }
 }
 
+static inline void prefill_cache_cyclic(STREAM_TYPE *a, STREAM_TYPE tmp, size_t array_size) {
+  for (size_t j = 0; j < array_size; j++) {
+      tmp = a[j];
+  }
+  for (size_t j = 0; j < array_size; j++) {
+      tmp = a[j];
+  }
+}
+
+static inline void prefill_cache_sawtooth(STREAM_TYPE *a, STREAM_TYPE tmp, size_t array_size) {
+  for (size_t j = 0; j < array_size; j++) {
+      tmp = a[j];
+  }
+  for (size_t j = array_size; j >= 0; j--) {
+      tmp = a[j];
+  }
+}
+
 int main(int argc, char *argv[]) {
   unsigned long long cycles[5][NTIMES];
   int quantum, checktick();
@@ -459,11 +477,11 @@ int main(int argc, char *argv[]) {
   clear_cache();
 
   // load the array into the cache
-
-  for (j = 0; j < array_size; j += 1) {
-    cyclic_tmp = cyclic[j];
-  }
-
+//prefill_cache_cyclic(cyclic, cyclic_tmp, array_size);
+    for (int t = 0; t < array_size; t++) {
+        cyclic_tmp = cyclic[t];
+    }
+    asm volatile ("mfence" ::: "memory");
 #pragma omp parallel for
   for (int k = 0; k < NTIMES; k++) {
     // times[0][k] = mysecond(); // start
@@ -505,19 +523,17 @@ int main(int argc, char *argv[]) {
   }
 #pragma omp parallel for
   for (j = 0; j < array_size; j++) {
-    // sawtooth_a[j] = 1.0;
-    // sawtooth_b[j] = 2.0;
-    // sawtooth_c[j] = 0.0;
     sawtooth[j] = 1.0 * j;
   }
   STREAM_TYPE sawtooth_tmp;
   clear_cache();
-  for (j = 0; j < array_size; j += 1) {
-    sawtooth_tmp = sawtooth[j];
+//  prefill_cache_sawtooth(sawtooth, sawtooth_tmp, array_size);
+  for (int t = 0; t < array_size; t++) {
+    sawtooth_tmp = sawtooth[t];
   }
+  asm volatile ("mfence" ::: "memory");
 #pragma omp parallel for
   for (int k = 0; k < NTIMES; k++) {
-    // times[1][k] = mysecond(); // start
     cycles[1][k] = rdtsc();
 #ifdef TUNED
     tuned_STREAM_Scale(scalar);
@@ -530,15 +546,9 @@ int main(int argc, char *argv[]) {
       sawtooth_tmp = sawtooth[j];
     }
 #endif
-    // times[1][k] = (mysecond() - times[1][k]) / 2; // end
     cycles[1][k] = (rdtsc() - cycles[1][k]) / 2;
   }
   free(sawtooth);
-  // checkSTREAMresults(sawtooth_a, sawtooth_b, sawtooth_c, "SAWTOOTH",
-  //                    array_size);
-  // free(sawtooth_a);
-  // free(sawtooth_b);
-  // free(sawtooth_c);
   /*----------------------RAND FORWARD FORWARD---------------------------*/
 
   // rand_forward_forward_a =
@@ -563,16 +573,15 @@ int main(int argc, char *argv[]) {
 
 #pragma omp parallel for
   for (j = 0; j < array_size; j++) {
-    // rand_forward_forward_a[j] = 1.0;
-    // rand_forward_forward_b[j] = 2.0;
-    // rand_forward_forward_c[j] = 0.0;
     rand_forward_forward[j] = 1.0 * j;
   }
   STREAM_TYPE rand_forward_forward_tmp;
   clear_cache();
-  for (j = 0; j < array_size; j += 1) {
-    rand_forward_forward_tmp = rand_forward_forward[j];
-  }
+//    prefill_cache_cyclic(rand_forward_forward, rand_forward_forward_tmp, array_size);
+    for (int t = 0; t < array_size; t++) {
+        rand_forward_forward_tmp = rand_forward_forward[t];
+    }
+    asm volatile ("mfence" ::: "memory");
 #pragma omp parallel for
   for (int k = 0; k < NTIMES; k++) {
     // times[2][k] = mysecond(); // start
@@ -627,16 +636,15 @@ int main(int argc, char *argv[]) {
 
 #pragma omp parallel for
   for (j = 0; j < array_size; j++) {
-    // rand_forward_backward_a[j] = 1.0;
-    // rand_forward_backward_b[j] = 2.0;
-    // rand_forward_backward_c[j] = 0.0;
     rand_forward_backward[j] = 1.0 * j;
   }
   STREAM_TYPE rand_forward_backward_tmp;
   clear_cache();
-  for (j = 0; j < array_size; j += 1) {
-    rand_forward_backward_tmp = rand_forward_backward[j];
-  }
+//    prefill_cache_sawtooth(rand_forward_backward, rand_forward_backward_tmp, array_size);
+    for (int t = 0; t < array_size; t++) {
+        rand_forward_backward_tmp = rand_forward_backward[t];
+    }
+    asm volatile ("mfence" ::: "memory");
 #pragma omp parallel for
   for (int k = 0; k < NTIMES; k++) {
     int for_back_stride = 0, for_back_rand = 0;
@@ -714,16 +722,15 @@ int main(int argc, char *argv[]) {
 
 #pragma omp parallel for
   for (j = 0; j < array_size; j++) {
-    // rand_backward_backward_a[j] = 1.0;
-    // rand_backward_backward_b[j] = 2.0;
-    // rand_backward_backward_c[j] = 0.0;
     rand_backward_backward[j] = 1.0 * j;
   }
   STREAM_TYPE rand_backward_backward_tmp;
   clear_cache();
-  for (j = 0; j < array_size; j += 1) {
-    rand_backward_backward_tmp = rand_backward_backward[j];
-  }
+//    prefill_cache_cyclic(rand_backward_backward, rand_backward_backward_tmp, array_size);
+    for (int t = 0; t < array_size; t++) {
+        rand_backward_backward_tmp = rand_backward_backward[t];
+    }
+    asm volatile ("mfence" ::: "memory");
 #pragma omp parallel for
   for (int k = 0; k < NTIMES; k++) {
     // times[4][k] = mysecond(); // start
