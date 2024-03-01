@@ -451,15 +451,7 @@ int main(int argc, char *argv[]) {
 
   /*----------------------CYCLIC---------------------------*/
 
-  // cyclic_a = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  // cyclic_b = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  // cyclic_c = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
   cyclic = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-
-  // if (cyclic_a == NULL || cyclic_b == NULL || cyclic_c == NULL) {
-  //   printf("Failed to allocate memory for cyclic arrays\n");
-  //   exit(1);
-  // }
 
   if (cyclic == NULL) {
     printf("Failed to allocate memory for cyclic arrays\n");
@@ -468,9 +460,6 @@ int main(int argc, char *argv[]) {
 
 #pragma omp parallel for
   for (j = 0; j < array_size; j++) {
-    // cyclic_a[j] = 1.0;
-    // cyclic_b[j] = 2.0;
-    // cyclic_c[j] = 0.0;
     cyclic[j] = 1.0 * j;
   }
   STREAM_TYPE cyclic_tmp;
@@ -484,7 +473,6 @@ int main(int argc, char *argv[]) {
     asm volatile ("mfence" ::: "memory");
 #pragma omp parallel for
   for (int k = 0; k < NTIMES; k++) {
-    // times[0][k] = mysecond(); // start
     cycles[0][k] = rdtsc();
 #ifdef TUNED
     tuned_STREAM_Copy();
@@ -497,26 +485,13 @@ int main(int argc, char *argv[]) {
       cyclic_tmp = cyclic[j];
     }
 #endif
-    // times[0][k] = (mysecond() - times[0][k]) / 2; // end
     cycles[0][k] = (rdtsc() - cycles[0][k]) / 2;
   }
-
   free(cyclic);
-  // checkSTREAMresults(cyclic_a, cyclic_b, cyclic_c, "CYCLIC", array_size);
-  // free(cyclic_a);
-  // free(cyclic_b);
-  // free(cyclic_c);
   /*----------------------SAWTOOTH---------------------------*/
 
-  // sawtooth_a = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  // sawtooth_b = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  // sawtooth_c = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
   sawtooth = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
 
-  // if (sawtooth_a == NULL || sawtooth_b == NULL || sawtooth_c == NULL) {
-  //   printf("Failed to allocate memory for cyclic arrays\n");
-  //   exit(1);
-  // }
   if (sawtooth == NULL) {
     printf("Failed to allocate memory for cyclic arrays\n");
     exit(1);
@@ -551,18 +526,6 @@ int main(int argc, char *argv[]) {
   free(sawtooth);
   /*----------------------RAND FORWARD FORWARD---------------------------*/
 
-  // rand_forward_forward_a =
-  //     (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  // rand_forward_forward_b =
-  //     (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  // rand_forward_forward_c =
-  //     (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-
-  // if (rand_forward_forward_a == NULL || rand_forward_forward_b == NULL ||
-  //     rand_forward_forward_c == NULL) {
-  //   printf("Failed to allocate memory for cyclic arrays\n");
-  //   exit(1);
-  // }
   rand_forward_forward =
       (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
 
@@ -573,8 +536,14 @@ int main(int argc, char *argv[]) {
 
 #pragma omp parallel for
   for (j = 0; j < array_size; j++) {
-    rand_forward_forward[j] = 1.0 * j;
+    rand_forward_forward[j] = array_size + 1;
   }
+    for (int p = 0, stride = 0, rand = 0, next = 0; p < array_size; p += 8) {
+        rand = (rand + stride) & (array_size - 1);
+        next = (rand + stride) & (array_size - 1);
+        rand_forward_forward[rand] = next;
+        stride += 8;
+    }
   STREAM_TYPE rand_forward_forward_tmp;
   clear_cache();
 //    prefill_cache_cyclic(rand_forward_forward, rand_forward_forward_tmp, array_size);
@@ -590,8 +559,6 @@ int main(int argc, char *argv[]) {
     tuned_STREAM_Add();
 #else
     // CYCLIC(forward-forward) + pseudo random accesses for the loop access
-    // pattern don't think we need an actual random number to start with, but it
-    // may be better??
     for (int p = 0, stride = 0, rand = 0; p < array_size; p += 8) {
       rand = (rand + stride) & (array_size - 1);
       rand_forward_forward_tmp = rand_forward_forward[rand];
@@ -603,30 +570,11 @@ int main(int argc, char *argv[]) {
       stride += 8;
     }
 #endif
-    // times[2][k] = (mysecond() - times[2][k]) / 2; // end
     cycles[2][k] = (rdtsc() - cycles[2][k]) / 2;
   }
   free(rand_forward_forward);
-  // checkSTREAMresults(rand_forward_forward_a, rand_forward_forward_b,
-  //                    rand_forward_forward_c, "RAND FORWARD FORWARD",
-  //                    array_size);
-  // free(rand_forward_forward_a);
-  // free(rand_forward_forward_b);
-  // free(rand_forward_forward_c);
   /*----------------------RAND FORWARD BACKWARD---------------------------*/
 
-  // rand_forward_backward_a =
-  //     (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  // rand_forward_backward_b =
-  //     (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  // rand_forward_backward_c =
-  //     (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-
-  // if (rand_forward_backward_a == NULL || rand_forward_backward_b == NULL ||
-  //     rand_forward_backward_c == NULL) {
-  //   printf("Failed to allocate memory for cyclic arrays\n");
-  //   exit(1);
-  // }
   rand_forward_backward =
       (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
   if (rand_forward_backward == NULL) {
@@ -657,17 +605,11 @@ int main(int argc, char *argv[]) {
     // pattern REAL SAWTOOTH
     for (int p = 0; p < array_size; p += 8) {
       for_back_rand = (for_back_rand + for_back_stride) & (array_size - 1);
-      // rand_forward_backward_a[for_back_rand] =
-      //     rand_forward_backward_b[for_back_rand] +
-      //     scalar * rand_forward_backward_c[for_back_rand];
       rand_forward_backward_tmp = rand_forward_backward[for_back_rand];
       for_back_stride += 8;
     }
     for (int p = 0; p < array_size; p += 8) {
       for_back_rand = (for_back_rand - for_back_stride) & (array_size - 1);
-      // rand_forward_backward_a[for_back_rand] =
-      //     rand_forward_backward_b[for_back_rand] +
-      //     scalar * rand_forward_backward_c[for_back_rand];
       rand_forward_backward_tmp = rand_forward_backward[for_back_rand];
       for_back_stride -= 8;
     }
@@ -693,26 +635,8 @@ int main(int argc, char *argv[]) {
     cycles[3][k] = (rdtsc() - cycles[3][k]) / 2;
   }
   free(rand_forward_backward);
-  // checkSTREAMresults(rand_forward_backward_a, rand_forward_backward_b,
-  //                    rand_forward_backward_c, "RAND FORWARD BACKWARD",
-  //                    array_size);
-  // free(rand_forward_backward_a);
-  // free(rand_forward_backward_b);
-  // free(rand_forward_backward_c);
   /*----------------------RAND BACKWARD BACKWARD---------------------------*/
 
-  // rand_backward_backward_a =
-  //     (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  // rand_backward_backward_b =
-  //     (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-  // rand_backward_backward_c =
-  //     (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
-
-  // if (rand_backward_backward_a == NULL || rand_backward_backward_b == NULL ||
-  //     rand_backward_backward_c == NULL) {
-  //   printf("Failed to allocate memory for cyclic arrays\n");
-  //   exit(1);
-  // }
   rand_backward_backward =
       (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
   if (rand_backward_backward == NULL) {
@@ -733,7 +657,6 @@ int main(int argc, char *argv[]) {
     asm volatile ("mfence" ::: "memory");
 #pragma omp parallel for
   for (int k = 0; k < NTIMES; k++) {
-    // times[4][k] = mysecond(); // start
     cycles[4][k] = rdtsc();
 #ifdef TUNED
     tuned_STREAM_Add();
@@ -753,16 +676,9 @@ int main(int argc, char *argv[]) {
       stride -= 8;
     }
 #endif
-    // times[4][k] = (mysecond() - times[4][k]) / 2; // end
     cycles[4][k] = (rdtsc() - cycles[4][k]) / 2;
   }
   free(rand_backward_backward);
-  // checkSTREAMresults(rand_backward_backward_a, rand_backward_backward_b,
-  //                    rand_backward_backward_c, "RAND BACKWARD BACKWARD",
-  //                    array_size);
-  // free(rand_backward_backward_a);
-  // free(rand_backward_backward_b);
-  // free(rand_backward_backward_c);
 
   /*	--- SUMMARY --- */
   // convert cycles to nanoseconds
@@ -1014,3 +930,4 @@ void tuned_STREAM_Triad(STREAM_TYPE scalar) {
 }
 /* end of stubs for the "tuned" versions of the kernels */
 #endif
+
