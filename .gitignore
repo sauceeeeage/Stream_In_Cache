@@ -7,3 +7,4 @@ stream_c_test
 /.vscode
 test.c
 stream
+test_stream.c

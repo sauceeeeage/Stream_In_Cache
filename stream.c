@@ -126,7 +126,7 @@
 #endif
 #endif
 #ifndef NTIMES
-#define NTIMES 10
+#define NTIMES 20
 #endif
 
 /*  Users are allowed to modify the "OFFSET" variable, which *may* change the
@@ -190,12 +190,8 @@
 #endif
 
 #ifndef STREAM_TYPE
-#define STREAM_TYPE double
+#define STREAM_TYPE long long
 #endif
-
-// static STREAM_TYPE a[STREAM_ARRAY_SIZE + OFFSET],
-//     b[STREAM_ARRAY_SIZE + OFFSET],
-//     c[STREAM_ARRAY_SIZE + OFFSET];
 
 static double t1[HALF_CACHE_SIZE], t2[HALF_CACHE_SIZE];
 
@@ -256,10 +252,10 @@ static inline void clear_cache() {
 /* use rdtscp and cpuid to get a high resolution time stamp, and if rdtscp is
  * not available, use rdtsc
  */
-
+// __attribute__((always_inline))
 static inline unsigned long long rdtsc() {
   // unsigned int lo, hi;
-  // __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
+  // __asm__ __volatile__("rdtscp" : "=a"(lo), "=d"(hi));
   // return ((unsigned long long)hi << 32) | lo;
   unsigned long long i;
   unsigned int ui;
@@ -278,26 +274,29 @@ int rdtscp_supported(void) {
   }
 }
 
-static inline void prefill_cache_cyclic(STREAM_TYPE *a, STREAM_TYPE tmp, size_t array_size) {
-  for (size_t j = 0; j < array_size; j++) {
-      tmp = a[j];
+static inline void prefill_cache_cyclic(STREAM_TYPE *a, STREAM_TYPE tmp,
+                                        size_t array_size) {
+  for (int j = 0; j < array_size; j++) {
+    tmp = a[j];
   }
-  for (size_t j = 0; j < array_size; j++) {
-      tmp = a[j];
+  for (int j = 0; j < array_size; j++) {
+    tmp = a[j];
   }
 }
 
-static inline void prefill_cache_sawtooth(STREAM_TYPE *a, STREAM_TYPE tmp, size_t array_size) {
-  for (size_t j = 0; j < array_size; j++) {
-      tmp = a[j];
+static inline void prefill_cache_sawtooth(STREAM_TYPE *a, STREAM_TYPE tmp,
+                                          size_t array_size) {
+  for (int j = 0; j < array_size; j++) {
+    tmp = a[j];
   }
-  for (size_t j = array_size; j >= 0; j--) {
-      tmp = a[j];
+  for (int j = array_size; j >= 0; j--) {
+    tmp = a[j];
   }
 }
 
 int main(int argc, char *argv[]) {
   unsigned long long cycles[5][NTIMES];
+  unsigned long long nothing_time[NTIMES];
   int quantum, checktick();
   int BytesPerWord;
   int k;
@@ -306,6 +305,7 @@ int main(int argc, char *argv[]) {
   double t, times[5][NTIMES];
   size_t array_size = atoi(argv[1]);
   cpu_set_t mask;
+  int *forward_direction, *backward_direction;
 
   double bytes[5] = {3 * sizeof(STREAM_TYPE) * array_size,
                      3 * sizeof(STREAM_TYPE) * array_size,
@@ -406,15 +406,26 @@ int main(int argc, char *argv[]) {
 
   printf(HLINE);
 
-  if ((quantum = checktick()) >= 1)
-    printf("Your clock granularity/precision appears to be "
-           "%d nanoseconds.\n",
-           quantum);
-  else {
-    printf("Your clock granularity appears to be "
-           "less than one nanosecond.\n");
-    quantum = 1;
+  asm volatile("mfence" ::: "memory");
+  for (int k = 0; k < NTIMES; k++) {
+    nothing_time[k] = rdtsc();
+    nothing_time[k] = (rdtsc() - nothing_time[k]);
+#ifdef PARTIAL_ORDERING
+    asm volatile("mfence" ::: "memory");
+#endif
   }
+  unsigned long long avg_nothing_time = 0, min_nothing_time = ULONG_MAX,
+                     max_nothing_time = 0;
+  for (k = 0; k < NTIMES; k++) {
+    avg_nothing_time = avg_nothing_time + nothing_time[k];
+    min_nothing_time = MIN(min_nothing_time, nothing_time[k]);
+    max_nothing_time = MAX(max_nothing_time, nothing_time[k]);
+  }
+  avg_nothing_time = avg_nothing_time / NTIMES;
+  printf("Need to adjust the number of cycles for function call overhead\n");
+  printf("Average time for overhead = %llu\n", avg_nothing_time);
+  printf("Minimum time for overhead = %llu\n", min_nothing_time);
+  printf("Maximum time for overhead = %llu\n", max_nothing_time);
 
   t = rdtsc();
   time_test = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
@@ -426,9 +437,10 @@ int main(int argc, char *argv[]) {
   for (int i = 0; i < array_size; i++) {
     time_test[i] = 1.0;
   }
+  STREAM_TYPE time_test_tmp;
 #pragma omp parallel for
-  for (j = 0; j < array_size; j++)
-    time_test[j] = 2.0E0 * time_test[j];
+  for (j = 0; j < array_size; j += 8)
+    time_test_tmp = time_test[j];
   t = (rdtsc() - t);
 
   printf("Each test below will take on the order"
@@ -448,6 +460,27 @@ int main(int argc, char *argv[]) {
   /*	--- MAIN LOOP --- repeat test cases NTIMES times --- */
 
   scalar = 3.0;
+  forward_direction = (int *)malloc(sizeof(int) * (array_size / 8));
+  backward_direction = (int *)malloc(sizeof(int) * (array_size / 8));
+  if (forward_direction == NULL || backward_direction == NULL) {
+    printf("Failed to allocate memory for direction arrays\n");
+    exit(1);
+  }
+
+  for (int p = 0, rand = 0; p < (array_size / 8) * 2; p++) {
+    rand = (rand + p) & ((array_size / 8) - 1);
+    if (p < (array_size / 8)) {
+      forward_direction[p] = rand * 8;
+    } else {
+      backward_direction[p - (array_size / 8)] = rand * 8;
+    }
+  }
+  // for (int p = 0; p < (array_size / 8); p++) {
+  //   printf("forward_direction[%d] = %d\n", p, forward_direction[p]);
+  // }
+  // for (int p = 0; p < (array_size / 8); p++) {
+  //   printf("backward_direction[%d] = %d\n", p, backward_direction[p]);
+  // }
 
   /*----------------------CYCLIC---------------------------*/
 
@@ -460,23 +493,24 @@ int main(int argc, char *argv[]) {
 
 #pragma omp parallel for
   for (j = 0; j < array_size; j++) {
-    cyclic[j] = 1.0 * j;
+    cyclic[j] = (STREAM_TYPE)(array_size + 1);
   }
   STREAM_TYPE cyclic_tmp;
   clear_cache();
 
   // load the array into the cache
-//prefill_cache_cyclic(cyclic, cyclic_tmp, array_size);
-    for (int t = 0; t < array_size; t++) {
-        cyclic_tmp = cyclic[t];
-    }
-    asm volatile ("mfence" ::: "memory");
+#ifdef PREFILL_WITH_PATTERN
+  prefill_cache_cyclic(cyclic, cyclic_tmp, array_size);
+#else
+  for (int t = 0; t < array_size; t++) {
+    cyclic_tmp = cyclic[t];
+  }
+#endif
+  asm volatile("mfence" ::: "memory");
 #pragma omp parallel for
   for (int k = 0; k < NTIMES; k++) {
     cycles[0][k] = rdtsc();
-#ifdef TUNED
-    tuned_STREAM_Copy();
-#else
+
     // CYCLIC
     for (j = 0; j < array_size; j += 8) {
       cyclic_tmp = cyclic[j];
@@ -484,8 +518,12 @@ int main(int argc, char *argv[]) {
     for (j = 0; j < array_size; j += 8) {
       cyclic_tmp = cyclic[j];
     }
+
+    // asm volatile("lfence" ::: "memory");
+    cycles[0][k] = (rdtsc() - cycles[0][k] - min_nothing_time) / 2;
+#ifdef PARTIAL_ORDERING
+    asm volatile("mfence" ::: "memory");
 #endif
-    cycles[0][k] = (rdtsc() - cycles[0][k]) / 2;
   }
   free(cyclic);
   /*----------------------SAWTOOTH---------------------------*/
@@ -498,21 +536,22 @@ int main(int argc, char *argv[]) {
   }
 #pragma omp parallel for
   for (j = 0; j < array_size; j++) {
-    sawtooth[j] = 1.0 * j;
+    sawtooth[j] = (STREAM_TYPE)(array_size + 1);
   }
   STREAM_TYPE sawtooth_tmp;
   clear_cache();
-//  prefill_cache_sawtooth(sawtooth, sawtooth_tmp, array_size);
+#ifdef PREFILL_WITH_PATTERN
+  prefill_cache_sawtooth(sawtooth, sawtooth_tmp, array_size);
+#else
   for (int t = 0; t < array_size; t++) {
     sawtooth_tmp = sawtooth[t];
   }
-  asm volatile ("mfence" ::: "memory");
+#endif
+  asm volatile("mfence" ::: "memory");
 #pragma omp parallel for
   for (int k = 0; k < NTIMES; k++) {
     cycles[1][k] = rdtsc();
-#ifdef TUNED
-    tuned_STREAM_Scale(scalar);
-#else
+
     // SAWTOOTH
     for (j = 0; j < array_size; j += 8) {
       sawtooth_tmp = sawtooth[j];
@@ -520,8 +559,12 @@ int main(int argc, char *argv[]) {
     for (j = array_size - 1; j >= 0; j -= 8) {
       sawtooth_tmp = sawtooth[j];
     }
+
+    // asm volatile("lfence" ::: "memory");
+    cycles[1][k] = (rdtsc() - cycles[1][k] - min_nothing_time) / 2;
+#ifdef PARTIAL_ORDERING
+    asm volatile("mfence" ::: "memory");
 #endif
-    cycles[1][k] = (rdtsc() - cycles[1][k]) / 2;
   }
   free(sawtooth);
   /*----------------------RAND FORWARD FORWARD---------------------------*/
@@ -536,29 +579,46 @@ int main(int argc, char *argv[]) {
 
 #pragma omp parallel for
   for (j = 0; j < array_size; j++) {
-    rand_forward_forward[j] = array_size + 1;
+    rand_forward_forward[j] = (STREAM_TYPE)(array_size + 1);
   }
-    for (int p = 0, stride = 0, rand = 0, next = 0; p < array_size; p += 8) {
-        rand = (rand + stride) & (array_size - 1);
-        next = (rand + stride) & (array_size - 1);
-        rand_forward_forward[rand] = next;
-        stride += 8;
-    }
+#ifdef DEPENDENT_ACCESS
+  for (int p = 0, stride = 0, rand = 0, next = 0; p < array_size; p += 8) {
+    rand = (rand + stride) & (array_size - 1);
+    stride += 8;
+    next = (rand + stride) & (array_size - 1);
+    rand_forward_forward[rand] = (STREAM_TYPE)next;
+  }
+#endif
   STREAM_TYPE rand_forward_forward_tmp;
   clear_cache();
-//    prefill_cache_cyclic(rand_forward_forward, rand_forward_forward_tmp, array_size);
-    for (int t = 0; t < array_size; t++) {
-        rand_forward_forward_tmp = rand_forward_forward[t];
-    }
-    asm volatile ("mfence" ::: "memory");
+#ifdef PREFILL_WITH_PATTERN
+  prefill_cache_cyclic(rand_forward_forward, rand_forward_forward_tmp,
+                       array_size);
+#else
+  for (int t = 0; t < array_size; t++) {
+    rand_forward_forward_tmp = rand_forward_forward[t];
+  }
+#endif
+  asm volatile("mfence" ::: "memory");
 #pragma omp parallel for
   for (int k = 0; k < NTIMES; k++) {
-    // times[2][k] = mysecond(); // start
+#ifdef DIRECTION_ARRAY
+    for (int t = 0, tmp; t < array_size / 8; t++) {
+      tmp = forward_direction[t];
+    }
+#endif
     cycles[2][k] = rdtsc();
-#ifdef TUNED
-    tuned_STREAM_Add();
-#else
+#ifdef DIRECTION_ARRAY
     // CYCLIC(forward-forward) + pseudo random accesses for the loop access
+    for (int p = 0; p < array_size / 8; p++) {
+      rand_forward_forward_tmp = rand_forward_forward[forward_direction[p]];
+    }
+    for (int p = 0; p < array_size / 8; p++) {
+      rand_forward_forward_tmp = rand_forward_forward[forward_direction[p]];
+    }
+#endif
+
+#ifdef DEFAULT
     for (int p = 0, stride = 0, rand = 0; p < array_size; p += 8) {
       rand = (rand + stride) & (array_size - 1);
       rand_forward_forward_tmp = rand_forward_forward[rand];
@@ -570,7 +630,23 @@ int main(int argc, char *argv[]) {
       stride += 8;
     }
 #endif
-    cycles[2][k] = (rdtsc() - cycles[2][k]) / 2;
+
+#ifdef DEPENDENT_ACCESS
+    // printf("DEPENDENT ACCESS for for\n");
+    for (int p = 0, rand_forward_forward_tmp = 0; p < array_size; p += 8) {
+      rand_forward_forward_tmp = rand_forward_forward[rand_forward_forward_tmp];
+    }
+    for (int p = 0, rand_forward_forward_tmp = 0; p < array_size; p += 8) {
+      rand_forward_forward_tmp = rand_forward_forward[rand_forward_forward_tmp];
+    }
+#endif
+
+    // asm volatile("lfence" ::: "memory");
+
+    cycles[2][k] = (rdtsc() - cycles[2][k] - min_nothing_time) / 2;
+#ifdef PARTIAL_ORDERING
+    asm volatile("mfence" ::: "memory");
+#endif
   }
   free(rand_forward_forward);
   /*----------------------RAND FORWARD BACKWARD---------------------------*/
@@ -584,25 +660,46 @@ int main(int argc, char *argv[]) {
 
 #pragma omp parallel for
   for (j = 0; j < array_size; j++) {
-    rand_forward_backward[j] = 1.0 * j;
+    rand_forward_backward[j] = (STREAM_TYPE)(array_size + 1);
   }
   STREAM_TYPE rand_forward_backward_tmp;
   clear_cache();
-//    prefill_cache_sawtooth(rand_forward_backward, rand_forward_backward_tmp, array_size);
-    for (int t = 0; t < array_size; t++) {
-        rand_forward_backward_tmp = rand_forward_backward[t];
-    }
-    asm volatile ("mfence" ::: "memory");
+#ifdef PREFILL_WITH_PATTERN
+  prefill_cache_sawtooth(rand_forward_backward, rand_forward_backward_tmp,
+                         array_size);
+#else
+  for (int t = 0; t < array_size; t++) {
+    rand_forward_backward_tmp = rand_forward_backward[t];
+  }
+#endif
+  asm volatile("mfence" ::: "memory");
 #pragma omp parallel for
   for (int k = 0; k < NTIMES; k++) {
-    int for_back_stride = 0, for_back_rand = 0;
-    // times[3][k] = mysecond(); // start timing
-    cycles[3][k] = rdtsc();
-#ifdef TUNED
-    tuned_STREAM_Triad(scalar);
-#else
+#ifdef DIRECTION_ARRAY
+    for (int t = 0, tmp; t < array_size / 8; t++) {
+      tmp = forward_direction[t];
+    }
+    for (int t = 0, tmp; t < array_size / 8; t++) {
+      tmp = backward_direction[t];
+    }
+#endif
+    cycles[3][k] = rdtsc(); // start the timer
+
     // SAWTOOTH(forward-backward) + pseudo random accesses for the loop access
     // pattern REAL SAWTOOTH
+#ifdef DIRECTION_ARRAY
+    // printf("here");
+    for (int p = 0; p < array_size / 8; p++) {
+      rand_forward_backward_tmp = rand_forward_backward[forward_direction[p]];
+    }
+    for (int p = 0; p < array_size / 8; p++) {
+      rand_forward_backward_tmp = rand_forward_backward[backward_direction[p]];
+    }
+#endif
+
+#ifdef DEFAULT
+    // printf("here");
+    int for_back_stride = 0, for_back_rand = 0;
     for (int p = 0; p < array_size; p += 8) {
       for_back_rand = (for_back_rand + for_back_stride) & (array_size - 1);
       rand_forward_backward_tmp = rand_forward_backward[for_back_rand];
@@ -613,6 +710,7 @@ int main(int argc, char *argv[]) {
       rand_forward_backward_tmp = rand_forward_backward[for_back_rand];
       for_back_stride -= 8;
     }
+#endif
 
     // END OF THE REAL SAWTOOTH
 
@@ -630,9 +728,13 @@ int main(int argc, char *argv[]) {
     // 	}
     // }
     // END OF THE FAKE SAWTOOTH
+
+    // asm volatile("lfence" ::: "memory");
+    cycles[3][k] =
+        (rdtsc() - cycles[3][k] - min_nothing_time) / 2; // stop the timer
+#ifdef PARTIAL_ORDERING
+    asm volatile("mfence" ::: "memory");
 #endif
-    // times[3][k] = (mysecond() - times[3][k]) / 2; // end
-    cycles[3][k] = (rdtsc() - cycles[3][k]) / 2;
   }
   free(rand_forward_backward);
   /*----------------------RAND BACKWARD BACKWARD---------------------------*/
@@ -646,23 +748,51 @@ int main(int argc, char *argv[]) {
 
 #pragma omp parallel for
   for (j = 0; j < array_size; j++) {
-    rand_backward_backward[j] = 1.0 * j;
+    rand_backward_backward[j] = (STREAM_TYPE)(array_size + 1);
   }
+#ifdef DEPENDENT_ACCESS
+  for (int p = 0, stride = array_size, rand = array_size / 2; p < array_size;
+       p += 8) {
+    rand = (rand + stride) & (array_size - 1);
+    stride += 8;
+    int next = (rand + stride) & (array_size - 1);
+    rand_forward_forward[rand] = (STREAM_TYPE)next;
+  }
+#endif
   STREAM_TYPE rand_backward_backward_tmp;
   clear_cache();
-//    prefill_cache_cyclic(rand_backward_backward, rand_backward_backward_tmp, array_size);
-    for (int t = 0; t < array_size; t++) {
-        rand_backward_backward_tmp = rand_backward_backward[t];
-    }
-    asm volatile ("mfence" ::: "memory");
+#ifdef PREFILL_WITH_PATTERN
+  prefill_cache_cyclic(rand_backward_backward, rand_backward_backward_tmp,
+                       array_size);
+#else
+  for (int t = 0; t < array_size; t++) {
+    rand_backward_backward_tmp = rand_backward_backward[t];
+  }
+#endif
+  asm volatile("mfence" ::: "memory");
 #pragma omp parallel for
   for (int k = 0; k < NTIMES; k++) {
-    cycles[4][k] = rdtsc();
-#ifdef TUNED
-    tuned_STREAM_Add();
-#else
-    // CYCLIC(backward-backward) + pseudo random accesses for the loop access
-    // pattern
+#ifdef DIRECTION_ARRAY
+    for (int t = 0, tmp; t < array_size / 8; t++) {
+      tmp = backward_direction[t];
+    }
+#endif
+    cycles[4][k] = rdtsc(); // start the timer
+
+// CYCLIC(backward-backward) + pseudo random accesses for the loop access
+// pattern
+#ifdef DIRECTION_ARRAY
+    for (int p = 0; p < array_size / 8; p++) {
+      rand_backward_backward_tmp =
+          rand_backward_backward[backward_direction[p]];
+    }
+    for (int p = 0; p < array_size / 8; p++) {
+      rand_backward_backward_tmp =
+          rand_backward_backward[backward_direction[p]];
+    }
+#endif
+
+#ifdef DEFAULT
     for (int p = 0, stride = array_size, rand = array_size / 2; p < array_size;
          p += 8) {
       rand = (rand - stride) & (array_size - 1);
@@ -676,13 +806,43 @@ int main(int argc, char *argv[]) {
       stride -= 8;
     }
 #endif
-    cycles[4][k] = (rdtsc() - cycles[4][k]) / 2;
+
+#ifdef DEPENDENT_ACCESS
+    // printf("DEPENDENT ACCESS back back\n");
+    for (int p = 0, rand_backward_backward_tmp = array_size / 2; p < array_size;
+         p += 8) {
+      rand_backward_backward_tmp =
+          rand_backward_backward[rand_backward_backward_tmp];
+    }
+    for (int p = 0, rand_backward_backward_tmp = array_size / 2; p < array_size;
+         p += 8) {
+      rand_backward_backward_tmp =
+          rand_backward_backward[rand_backward_backward_tmp];
+    }
+#endif
+
+    // asm volatile("lfence" ::: "memory");
+    cycles[4][k] =
+        (rdtsc() - cycles[4][k] - min_nothing_time) / 2; // stop the timer
+#ifdef PARTIAL_ORDERING
+    asm volatile("mfence" ::: "memory");
+#endif
   }
   free(rand_backward_backward);
 
+  free(forward_direction);
+  free(backward_direction);
   /*	--- SUMMARY --- */
   // convert cycles to nanoseconds
   double frequency = 5.76 * 1000 * 1000 * 1000;
+// print the cycles
+#ifdef PRINT_CYCLES
+  for (int i = 0; i < 5; i++) {
+    for (int j = 0; j < NTIMES; j++) {
+      printf("cycles[%d][%d] = %llu\n", i, j, cycles[i][j]);
+    }
+  }
+#endif
   for (int i = 0; i < 5; i++) {
     for (int j = 0; j < NTIMES; j++) {
       // times[i][j] = cycles[i][j] / frequency;
@@ -690,8 +850,7 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  for (k = 0; k < NTIMES; k++) /* note -- skip first iteration */
-  {
+  for (k = 0; k < NTIMES; k++) {
     for (j = 0; j < 5; j++) {
       avgtime[j] = avgtime[j] + times[j][k];
       mintime[j] = MIN(mintime[j], times[j][k]);
@@ -930,4 +1089,3 @@ void tuned_STREAM_Triad(STREAM_TYPE scalar) {
 }
 /* end of stubs for the "tuned" versions of the kernels */
 #endif
-

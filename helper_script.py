@@ -9,7 +9,7 @@ REMEMBER TO DELETE THE LOG EVERYTIME WHEN STARTING A NEW RUN
 
 #gcc -O2 -fno-tree-vectorize stream.c -o stream_c.exe -DSTREAM_ARRAY_SIZE=20000000 -DSTRIDE=1000 -DSTREAM_TYPE=double 
 #STREAM_ARRAY_SIZE=20000000 STRIDE=1000 cargo build --release 
-c_make_command = "gcc -O0 -D_GNU_SOURCE=1 stream.c -o stream_c.exe"
+c_make_command = "gcc -O0 -D_GNU_SOURCE=1 -fno-tree-vectorize -fno-unroll-loops -fno-peel-loops -fno-loop-optimize -fno-tree-loop-optimize -DDEFAULT stream.c -o stream_c.exe"
 c_opm_make_command = "gcc -O2 stream.c -o stream_c.exe"
 c_make_f32_command = "gcc -O2 stream.c -o stream_c_f32.exe"
 c_make_f64_command = "gcc -O2 stream.c -o stream_c_f64.exe"
@@ -34,7 +34,7 @@ def to_next_power_of_two(n):
 stride = 2000
 counter = 8
 diff = 1
-stop = to_next_power_of_two(16777217) # 2^25=33554432, let's boost it to 2^27=134217728
+stop = to_next_power_of_two(33554433) # 2^25=33554432, let's boost it to 2^27=134217728
 
 # For cycle2 machine, L1 32KB, L2 should be 3MB, and L3 should be 30MB
 # For Shaotong's machine, L1d is a 16 instances of 512KB, L2 is 16 instances of 16MB, and L3 is 2 instances of 128MB
@@ -74,7 +74,10 @@ def get_result(size, result, type):
 if __name__ == "__main__":
    print(f"running: {c_make_command}")
    run_make_command(c_make_command)
-
+   actual_size = to_next_power_of_two(counter)
+   run_with_size = run_c + space + str(actual_size)
+   c_result = run_make_command(run_with_size)
+   get_result(actual_size, c_result, "double")
    while counter <= stop:
       actual_size = to_next_power_of_two(counter)
       run_with_size = run_c + space + str(actual_size)
