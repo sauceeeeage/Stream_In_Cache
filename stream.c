@@ -207,6 +207,11 @@ extern double mysecond();
 
 extern void checkSTREAMresults();
 
+struct loop_index {
+  long start;
+  long end;
+};
+
 #ifdef TUNED
 extern void tuned_STREAM_Copy();
 extern void tuned_STREAM_Scale(STREAM_TYPE scalar);
@@ -297,13 +302,15 @@ static inline void prefill_cache_sawtooth(STREAM_TYPE *a, STREAM_TYPE tmp,
 int main(int argc, char *argv[]) {
   unsigned long long cycles[5][NTIMES];
   unsigned long long nothing_time[NTIMES];
+  unsigned long long arithmetic_time[NTIMES];
   int quantum, checktick();
   int BytesPerWord;
   int k;
   ssize_t j;
   STREAM_TYPE scalar;
   double t, times[5][NTIMES];
-  size_t array_size = atoi(argv[1]);
+  size_t array_size = atoi(argv[1]), last_element = array_size - 1,
+         half_array_size = array_size / 2;
   cpu_set_t mask;
   int *forward_direction, *backward_direction;
 
@@ -409,6 +416,10 @@ int main(int argc, char *argv[]) {
   asm volatile("mfence" ::: "memory");
   for (int k = 0; k < NTIMES; k++) {
     nothing_time[k] = rdtsc();
+    for (int t = 0; t < array_size; t += 8) {
+    }
+    for (int t = 0; t < array_size; t += 8) {
+    }
     nothing_time[k] = (rdtsc() - nothing_time[k]);
 #ifdef PARTIAL_ORDERING
     asm volatile("mfence" ::: "memory");
@@ -427,6 +438,51 @@ int main(int argc, char *argv[]) {
   printf("Minimum time for overhead = %llu\n", min_nothing_time);
   printf("Maximum time for overhead = %llu\n", max_nothing_time);
 
+  asm volatile("mfence" ::: "memory");
+  for (int k = 0; k < NTIMES; k++) {
+    arithmetic_time[k] = rdtsc();
+#ifdef DEFAULT
+    for (int p = 0, r = 0, s = 0; p < array_size; p += 8) {
+      r = (r + s) & (array_size - 1);
+      s += 8;
+    }
+    for (int p = 0, r = 0, s = 0; p < array_size; p += 8) {
+      r = (r + s) & (array_size - 1);
+      s += 8;
+    }
+#endif
+#ifdef DIRECTION_ARRAY
+    for (int t = 0; t < array_size / 8; t++) {
+    }
+    for (int t = 0; t < array_size / 8; t++) {
+    }
+#endif
+#ifdef DEFAULT_DEPENDENT
+    for (int p = 0, r = 0; p < array_size; p += 8) {
+      r = (r + p) & last_element;
+    }
+    for (int p = 0, r = 0; p < array_size; p += 8) {
+      r = (r + p) & last_element;
+    }
+#endif
+    arithmetic_time[k] = (rdtsc() - arithmetic_time[k]);
+#ifdef PARTIAL_ORDERING
+    asm volatile("mfence" ::: "memory");
+#endif
+  }
+  unsigned long long avg_arithmetic_time = 0, min_arithmetic_time = ULONG_MAX,
+                     max_arithmetic_time = 0;
+  for (k = 0; k < NTIMES; k++) {
+    avg_arithmetic_time = avg_arithmetic_time + arithmetic_time[k];
+    min_arithmetic_time = MIN(min_arithmetic_time, arithmetic_time[k]);
+    max_arithmetic_time = MAX(max_arithmetic_time, arithmetic_time[k]);
+  }
+  avg_arithmetic_time = avg_arithmetic_time / NTIMES;
+  printf("Average time for arithmetic = %llu\n", avg_arithmetic_time);
+  printf("Minimum time for arithmetic = %llu\n", min_arithmetic_time);
+  printf("Maximum time for arithmetic = %llu\n", max_arithmetic_time);
+
+  printf(HLINE);
   t = rdtsc();
   time_test = (STREAM_TYPE *)malloc(sizeof(STREAM_TYPE) * array_size);
   if (time_test == NULL) {
@@ -556,7 +612,7 @@ int main(int argc, char *argv[]) {
     for (j = 0; j < array_size; j += 8) {
       sawtooth_tmp = sawtooth[j];
     }
-    for (j = array_size - 1; j >= 0; j -= 8) {
+    for (j = last_element; j >= 0; j -= 8) {
       sawtooth_tmp = sawtooth[j];
     }
 
@@ -581,12 +637,12 @@ int main(int argc, char *argv[]) {
   for (j = 0; j < array_size; j++) {
     rand_forward_forward[j] = (STREAM_TYPE)(array_size + 1);
   }
-#ifdef DEPENDENT_ACCESS
-  for (int p = 0, stride = 0, rand = 0, next = 0; p < array_size; p += 8) {
-    rand = (rand + stride) & (array_size - 1);
+#ifdef DEFAULT_DEPENDENT
+  for (int p = 0, stride = 0, rand = 0, tmp = 0; p < array_size; p += 8) {
+    tmp = rand + stride;
+    rand = tmp & last_element;
+    rand_forward_forward[rand] = (STREAM_TYPE)rand;
     stride += 8;
-    next = (rand + stride) & (array_size - 1);
-    rand_forward_forward[rand] = (STREAM_TYPE)next;
   }
 #endif
   STREAM_TYPE rand_forward_forward_tmp;
@@ -631,19 +687,20 @@ int main(int argc, char *argv[]) {
     }
 #endif
 
-#ifdef DEPENDENT_ACCESS
-    // printf("DEPENDENT ACCESS for for\n");
+#ifdef DEFAULT_DEPENDENT
     for (int p = 0, rand_forward_forward_tmp = 0; p < array_size; p += 8) {
+      rand_forward_forward_tmp = (rand_forward_forward_tmp + p) & last_element;
       rand_forward_forward_tmp = rand_forward_forward[rand_forward_forward_tmp];
     }
     for (int p = 0, rand_forward_forward_tmp = 0; p < array_size; p += 8) {
+      rand_forward_forward_tmp = (rand_forward_forward_tmp + p) & last_element;
       rand_forward_forward_tmp = rand_forward_forward[rand_forward_forward_tmp];
     }
 #endif
 
     // asm volatile("lfence" ::: "memory");
 
-    cycles[2][k] = (rdtsc() - cycles[2][k] - min_nothing_time) / 2;
+    cycles[2][k] = (rdtsc() - cycles[2][k] - min_arithmetic_time) / 2;
 #ifdef PARTIAL_ORDERING
     asm volatile("mfence" ::: "memory");
 #endif
@@ -662,6 +719,14 @@ int main(int argc, char *argv[]) {
   for (j = 0; j < array_size; j++) {
     rand_forward_backward[j] = (STREAM_TYPE)(array_size + 1);
   }
+#ifdef DEFAULT_DEPENDENT
+  for (int p = 0, stride = 0, rand = 0, tmp = 0; p < array_size; p += 8) {
+    tmp = rand + stride;
+    rand = tmp & last_element;
+    rand_forward_backward[rand] = (STREAM_TYPE)rand;
+    stride += 8;
+  }
+#endif
   STREAM_TYPE rand_forward_backward_tmp;
   clear_cache();
 #ifdef PREFILL_WITH_PATTERN
@@ -688,7 +753,6 @@ int main(int argc, char *argv[]) {
     // SAWTOOTH(forward-backward) + pseudo random accesses for the loop access
     // pattern REAL SAWTOOTH
 #ifdef DIRECTION_ARRAY
-    // printf("here");
     for (int p = 0; p < array_size / 8; p++) {
       rand_forward_backward_tmp = rand_forward_backward[forward_direction[p]];
     }
@@ -698,7 +762,6 @@ int main(int argc, char *argv[]) {
 #endif
 
 #ifdef DEFAULT
-    // printf("here");
     int for_back_stride = 0, for_back_rand = 0;
     for (int p = 0; p < array_size; p += 8) {
       for_back_rand = (for_back_rand + for_back_stride) & (array_size - 1);
@@ -709,6 +772,22 @@ int main(int argc, char *argv[]) {
       for_back_rand = (for_back_rand - for_back_stride) & (array_size - 1);
       rand_forward_backward_tmp = rand_forward_backward[for_back_rand];
       for_back_stride -= 8;
+    }
+#endif
+
+#ifdef DEFAULT_DEPENDENT
+    for (int p = 0, rand_forward_backward_tmp = 0; p < array_size; p += 8) {
+      rand_forward_backward_tmp =
+          (rand_forward_backward_tmp + p) & last_element;
+      rand_forward_backward_tmp =
+          rand_forward_backward[rand_forward_backward_tmp];
+    }
+    for (int p = array_size, rand_forward_backward_tmp = half_array_size;
+         p >= 0; p -= 8) {
+      rand_forward_backward_tmp =
+          (rand_forward_backward_tmp - p) & last_element;
+      rand_forward_backward_tmp =
+          rand_forward_backward[rand_forward_backward_tmp];
     }
 #endif
 
@@ -731,7 +810,7 @@ int main(int argc, char *argv[]) {
 
     // asm volatile("lfence" ::: "memory");
     cycles[3][k] =
-        (rdtsc() - cycles[3][k] - min_nothing_time) / 2; // stop the timer
+        (rdtsc() - cycles[3][k] - min_arithmetic_time) / 2; // stop the timer
 #ifdef PARTIAL_ORDERING
     asm volatile("mfence" ::: "memory");
 #endif
@@ -750,13 +829,12 @@ int main(int argc, char *argv[]) {
   for (j = 0; j < array_size; j++) {
     rand_backward_backward[j] = (STREAM_TYPE)(array_size + 1);
   }
-#ifdef DEPENDENT_ACCESS
-  for (int p = 0, stride = array_size, rand = array_size / 2; p < array_size;
-       p += 8) {
-    rand = (rand + stride) & (array_size - 1);
+#ifdef DEFAULT_DEPENDENT
+  for (int p = 0, stride = 0, rand = 0, tmp = 0; p < array_size; p += 8) {
+    tmp = rand + stride;
+    rand = tmp & last_element;
+    rand_backward_backward[rand] = (STREAM_TYPE)rand;
     stride += 8;
-    int next = (rand + stride) & (array_size - 1);
-    rand_forward_forward[rand] = (STREAM_TYPE)next;
   }
 #endif
   STREAM_TYPE rand_backward_backward_tmp;
@@ -807,15 +885,18 @@ int main(int argc, char *argv[]) {
     }
 #endif
 
-#ifdef DEPENDENT_ACCESS
-    // printf("DEPENDENT ACCESS back back\n");
-    for (int p = 0, rand_backward_backward_tmp = array_size / 2; p < array_size;
-         p += 8) {
+#ifdef DEFAULT_DEPENDENT
+    for (int p = array_size, rand_backward_backward_tmp = half_array_size;
+         p >= 0; p -= 8) {
+      rand_backward_backward_tmp =
+          (rand_backward_backward_tmp - p) & last_element;
       rand_backward_backward_tmp =
           rand_backward_backward[rand_backward_backward_tmp];
     }
-    for (int p = 0, rand_backward_backward_tmp = array_size / 2; p < array_size;
-         p += 8) {
+    for (int p = array_size, rand_backward_backward_tmp = half_array_size;
+         p >= 0; p -= 8) {
+      rand_backward_backward_tmp =
+          (rand_backward_backward_tmp - p) & last_element;
       rand_backward_backward_tmp =
           rand_backward_backward[rand_backward_backward_tmp];
     }
@@ -823,7 +904,7 @@ int main(int argc, char *argv[]) {
 
     // asm volatile("lfence" ::: "memory");
     cycles[4][k] =
-        (rdtsc() - cycles[4][k] - min_nothing_time) / 2; // stop the timer
+        (rdtsc() - cycles[4][k] - min_arithmetic_time) / 2; // stop the timer
 #ifdef PARTIAL_ORDERING
     asm volatile("mfence" ::: "memory");
 #endif

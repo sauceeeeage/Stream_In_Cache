@@ -8,3 +8,4 @@ stream_c_test
 test.c
 stream
 test_stream.c
+test.py
